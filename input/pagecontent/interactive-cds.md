@@ -1,22 +1,22 @@
-Interactive CDS is a process whereby the clinician facing user interface prompts for required data ([CPG Case Feature]())  via a questionnaire and questionnaire response in order to evaluate the applicability of clinical guideline recommendations ([CPG Plan Definition]()).
+Interactive CDS is a process whereby the clinician facing user interface prompts for required data ([CPG Case Feature]())  via a form in order to evaluate the applicability of clinical guideline recommendations ([CPG Plan Definition]()).
 
 ### PlanDefinition $apply with questionnaire generation
 
-Questionnaire generation may be enabled for PlanDefinition/$apply to elicit user feedback on required data elements as follows:
+Questionnaire generation may be enabled for PlanDefinition/$apply to elicit user input on required data elements as follows:
 
-1. For each PlanDefinition with action.input, call [StructureDefinition/$questionnaire](https://hl7.org/fhir/R4/structuredefinition-operation-questionnaire.html) in minimal mode (differentialOnly=true)
+1. For each case feature definition referenced from PlanDefinition action.input, call [StructureDefinition/$questionnaire](https://hl7.org/fhir/R4/structuredefinition-operation-questionnaire.html) in minimal mode (differentialOnly=true). Recurse over nested plan definitions to include all case features.
 
-2. For each set of questions generated in step 1, add these as group items to the questionnaire to produce a single questionnaire. The process should conceptually align with [Questionnaire/$assemble](https://hl7.org/fhir/uv/sdc/OperationDefinition-Questionnaire-assemble.html) and conform to [SDC Extractable Questionnaire](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-extr-defn), although the methodology may differ.
+2. Add each set of questions from step 1 (each corresponding to a case feature) as group items in a questionnaire to produce a single questionnaire. The questionnaire should conform to [SDC Populatable Questionnaire - Expression](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-pop-exp) and [SDC Extractable Questionnaire - Definition](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-extr-defn) and should align with the expected output of [Questionnaire/$assemble](https://hl7.org/fhir/uv/sdc/OperationDefinition-Questionnaire-assemble.html), although the assembly process may differ.
 
-3. To build a pre-populated QuestionnaireResponse containing the Questionnaire from Step 2, call [Questionnaire/$populate](https://hl7.org/fhir/uv/sdc/OperationDefinition-Questionnaire-populate.html)
+3. Build a pre-populated QuestionnaireResponse containing the Questionnaire from Step 2 by calling [Questionnaire/$populate](https://hl7.org/fhir/uv/sdc/OperationDefinition-Questionnaire-populate.html) using [SDC expression based population](https://hl7.org/fhir/uv/sdc/populate.html#exp-pop)
 
 4. Pause for user input to either
 
-   1. Change the QuestionnaireResponse and proceed to Steps 3 and 4; Or
+   1. Change the QuestionnaireResponse and proceed to Steps 5 and 6; Or
 
    2. Select recommendations from the RequestGroup and end they apply cycle
 
-5. If the QuestionnaireResponse is updated, call [QuestionnaireResponse/$extract](https://hl7.org/fhir/uv/sdc/OperationDefinition-QuestionnaireResponse-extract.html) to create new resources based on QuestionnaireResponse from Steps 3 and 4
+5. If the QuestionnaireResponse is updated, call [QuestionnaireResponse/$extract](https://hl7.org/fhir/uv/sdc/OperationDefinition-QuestionnaireResponse-extract.html) using [SDC definition based extraction](https://hl7.org/fhir/uv/sdc/extraction.html#definition-extract) to create new resources based on QuestionnaireResponse from Steps 3 and 4
 
 6. If there are new resources from Step 5, pass to the context and call [PlanDefinition/$apply](https://build.fhir.org/ig/HL7/cqf-recommendations/OperationDefinition-cpg-plandefinition-apply.html). The cycle repeats.
 
@@ -24,9 +24,8 @@ In this way, $questionnaire is used with $apply and existing SDC operations to
 
 1. Prompt users for required data;
 2. Pre-populate answers based on documented case features and/or inferencing rules;
-3. Confirm pre-populated data;
-4. Extract new data; and
-5. Return the latest recommendations
+3. Confirm pre-populated data; and
+4. Extract new data to update the recommendations
 
 ### Questionnaire Processing Semantics
 
@@ -36,94 +35,199 @@ To enable questionnaire generation based on CPG Case Features, $questionnaire ca
 
 See [core $questionnaire operation](https://hl7.org/fhir/R4/structuredefinition-operation-questionnaire.html)
 
-The core operation is extended in CPG to support the parameter 'differentialOnly'. In this way, only the elements that are necessary for form data extraction will be generated as questionnaire items. See [Authoring Guidance](#authoring-guidance).
+The core operation is extended in CPG to support the parameter 'coreOnly'. If true, elements from the structure definition should be processed if:
 
-<!-- What if must support and differential only are true ? -->
+1. The element is a part of the differential;
+2. The element is a part of the snapshot and has a cardinality of at least 1..\* (min >1). Nested child elements with min > 1 should also be included if parent has min > 1;
+3. The element is not a fixed value (fixed[x] or pattern[x])
 
 Optionally, the parameter "supportedOnly" may be supplied. If true, the above applies only to elements with must support flags.
 
-| elementDefinition                                     | questionnaireItem                                                                                                                              | notes                                                                                                                                                             |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pattern[x]                                            | sets initial[x], hidden true                                                                                                                   | Because questionnaire.item.initial.value[x] is a subset of pattern[x], we have rules to coerce                                                                    |
-| fixed[x]                                              | sets initial[x], hidden true                                                                                                                   | Because questionnaire.item.initial.value[x] is a subset of fixed[x], we have rules to coerce                                                                      |
-| defaultValue[x]                                       | sets initial[x], hidden false                                                                                                                  |                                                                                                                                                                   |
-| CPG featureExpression                                 | sets [questionnaire-initialExpression](https://hl7.org/fhir/uv/sdc/StructureDefinition-sdc-questionnaire-initialExpression.html), hidden false | see [Conformance with expression based population and definition based extraction](#conformance-with-expression-based-population-and-definition-based-extraction) |
-| {structureDefinition.url}#{element.path}              | definition                                                                                                                                     | for choice type paths, replace [x] with element type.code[0]                                                                                                      |
-| short description; element label; or stringified path | text                                                                                                                                           |                                                                                                                                                                   |
-| type                                                  | type                                                                                                                                           | see [ElementDefinition Mappings](#mapping-elementdefinition-data-types-to-questionnaire-items)                                                                    |
-| min > 0                                               | required                                                                                                                                       |                                                                                                                                                                   |
-| max > 1                                               | repeats                                                                                                                                        |                                                                                                                                                                   |
-| maxLength                                             | maxLength                                                                                                                                      | apply if type = string                                                                                                                                            |
-| binding.valueSet                                      | expanded valueSet used as answerOption, set type as 'choice'                                                                                   |                                                                                                                                                                   |
-| ??                                                    | readOnly                                                                                                                                       |                                                                                                                                                                   |
+The goal of core only mode is to process only the elements required for definition based extraction. See [Authoring Guidance](#authoring-guidance) on best practices for authoring case feature definitions for core questionnaire generation.
 
-Process elements from the structure definition resource:
+<!-- What if must support and differential only are true ? -->
 
-- For each element to process, create a questionnaire item
-  - If the element has pattern[x] or fixed[x] make the item hidden and set initial[x]
-  - Otherwise, make the item visible
-  - If CPG case featureExpression returns a value for the element, set initialExpression (see [Conformance with expression based population and definition based extraction](#conformance-with-expression-based-population-and-definition-based-extraction)); else if the element has defaultValue[x], set initial[x]
-  - For the rest of questionnaire item properties:
+| elementDefinition                                     | questionnaireItem                                                      | notes                                                                                                                                                             |
+| ----------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| extension[sdc-questionnaire-definitionExtractValue]   | sets extension[sdc-questionnaire-definitionExtractValue] on group item | Authored on case feature elements that will be evaluated as an expression during $extract                                                                         |
+| CPG featureExpression                                 | sets [questionnaire-initialExpression]                                 | see [Conformance with expression based population and definition based extraction](#conformance-with-expression-based-population-and-definition-based-extraction) |
+| {structureDefinition.url}#{element.path}              | definition                                                             | for choice type paths, replace [x] with element type.code[0]                                                                                                      |
+| short description; element label; or stringified path | text                                                                   |                                                                                                                                                                   |
+| type                                                  | type                                                                   | see [ElementDefinition Mappings](#mapping-elementdefinition-data-types-to-questionnaire-items)                                                                    |
+| min > 0                                               | required                                                               |                                                                                                                                                                   |
+| max > 1                                               | repeats                                                                |                                                                                                                                                                   |
+| maxLength                                             | maxLength                                                              | apply if type = string                                                                                                                                            |
+| binding.valueSet                                      | expanded valueSet used as answerOption, set type as 'choice'           |                                                                                                                                                                   |
+| ??                                                    | readOnly                                                               |                                                                                                                                                                   |
+
+Process elements from the structure definition resource. For each element to process:
+
+  - If the element has the [SDC definition extract value extension](https://build.fhir.org/ig/HL7/sdc/StructureDefinition-sdc-questionnaire-definitionExtractValue.html), it is not necessary to create a questionnaire item. Instead, carry the extension over to the root item with type 'group'. See [details on populate and extract conformance below](#conformance-with-expression-based-population-and-definition-based-extractionconformance).
+
+  - Otherwise, process a new child item as follows
+
+    - If CPG case featureExpression is present, set the [SDC initial expression extension](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-initialExpression). See [Conformance with expression based population and definition based extraction](#conformance-with-expression-based-population-and-definition-based-extraction)
+
     - QuestionnaireItem.linkId => generate some unique id
+
     - QuestionnaireItem.definition => "{structureDefinition.url}#{full element path}", where:
+
       - "full element path" is path unless the path is a choice type (e.g. 'Observation.value[x]')
       - "full element path" is path with `[x]` replaced with the first (and only) type.code
+
     - QuestionnaireItem.code => Not used
+
     - QuestionnaireItem.prefix => Not used
+
     - QuestionnaireItem.text in order of preference =>
+
       - Element short description;
       - Element label; or
       - "Stringify" the path
+
     - QuestionnaireItem.type (should always be primitive type) =>
+
       - If the element type is specified in the differential, map to Questionnaire.type
       - If the element type is not specified in the differential, use the snapshot type and map to Questionnaire.type
-      - If of type code, treat as a coding with type 'choice'(note: during $extract need to map this type back to code)
+      - If type code, treat as a coding with type 'choice' (note: during $extract need to map this type back to code)
       - For a more detailed mapping of primitive and complex data types, see [ElementDefinition Mappings](#mapping-elementdefinition-data-types-to-questionnaire-items)
+
     - QuestionnaireItem.required => if (element.min > 0)
+
     - QuestionnaireItem.repeats => if (element.max > 1)
+
     - QuestionnaireItem.readOnly => Context from the corresponding data-requirement or default[x] (???)
+
     - QuestionnaireItem.maxLength => element.maxLength (if type is a string)
+
     - QuestionnaireItem.answerOption => expanded value set binding <!-- How should example binding be handled? open choice? -->
-- Ideally, the snapshot element will be used as a fallback for properties missing on differential elements. <!-- How should properties like "type" be handled, where the snapshot element definition may include multiple types -->
+
+      <!-- to do: how to handle [questionnaire-unit](http://hl7.org/fhir/R4/extension-questionnaire-unit.html)-->
+
+      <!-- to do: how to handle sliced elements-->
 
 ##### Conformance with expression based population and definition based extraction
 
-See [SDC expression based population](https://build.fhir.org/ig/HL7/sdc/populate.html#expression-based-population) and [SDC definition based extraction](https://hl7.org/fhir/uv/sdc/extraction.html#definition-based-extraction)
+See [SDC expression based population](https://build.fhir.org/ig/HL7/sdc/populate.html#expression-based-population) and [SDC definition based extraction](https://build.fhir.org/ig/HL7/sdc/extraction.html#definition-extract)
 
-To conform to $populate and \$extract, the questionnaire should:
+To conform to $populate and \$extract:
 
-- Include extension [questionnaire-launchContext](https://hl7.org/fhir/uv/sdc/StructureDefinition-sdc-questionnaire-launchContext.html) on the questionnaire for the in context subject (most often Patient)
-- If the extension [CPG featureExpression](https://hl7.org/fhir/uv/cpg/StructureDefinition-cpg-featureExpression.html), set [questionnaire-itemPopulationContext](https://build.fhir.org/ig/HL7/sdc/StructureDefinition-sdc-questionnaire-itemPopulationContext.html) on the root item to the featureExpression.valueExpression
-- For each element where there is a [CPG featureExpression](https://hl7.org/fhir/uv/cpg/StructureDefinition-cpg-featureExpression.html) value and absence of fixed[x] and pattern[x], set item [questionnaire-initialExpression](https://hl7.org/fhir/uv/sdc/StructureDefinition-sdc-questionnaire-initialExpression.html) extension expression to element path as a context variable. The item should be visible. <!--Is this the best way to get the corresponding case feature property?-->
+- At the root of the questionnaire, include extension [questionnaire-launchContext](https://hl7.org/fhir/uv/sdc/StructureDefinition-sdc-questionnaire-launchContext.html) for the in context subject (most often Patient), encounter, etc
 
-Note that initial[x] and initialExpression are mutually exclusive. These are set in order of preference:
+- At the root item with type 'group'
 
-1. If available, use fixed[x] and patter[x] to set initial[x]; else
+  - Include the [SDC definition extract extension](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-definitionExtract). Set extension[definition].valueCanonical to the canonical of the SD.
 
-2. If available, use CPG featureExpression to set initialExpression; else
+  - Carry over any [SDC definition extract value extension](https://build.fhir.org/ig/HL7/sdc/StructureDefinition-sdc-questionnaire-definitionExtractValue.html) from the structure definition.
 
-3. If available, use default[x] to set initial[x]
+  - If CPG featureExpression is present on the SD
+
+    - Add the [SDC item population context extension](http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-itemPopulationContext) set to the CPG featureExpression;
+
+    - For each child item, include the [questionnaire-initialExpression](https://hl7.org/fhir/uv/sdc/StructureDefinition-sdc-questionnaire-initialExpression.html) extension use the population context
 
 ##### Mapping ElementDefinition data types to Questionnaire Items
 
-- See mappings of FHIR primitive types to QuestionnaireItem.initialValue[x] and QuestionnaireItem.type [here](https://docs.google.com/spreadsheets/d/1YmmW28fDX0VsSlQAVsK2p9bbkV3hxhxnUaUCiRKAL6M/edit?usp=sharing)
-- For non-primitive, complex data types, $questionnaire should be applied to the SD of the data type and returned as a subgroup of questionnaire items
-- See `./rangeQuestionnaireRepresentation` as an example questionnaire.item representation of the Range data type [Datatypes - FHIR v5.0.0](https://www.hl7.org/fhir/datatypes.html#Range)
+Allowed data types beteween element definition and questionnaire items differ where element definition allows for complex data types and questionnaire is restricted to primitive types, Quantity, Reference, and Coding. The data types can be mapped between SD and questionnaire as outlined in the table below.
+
+| FHIR Primitive Type | QuestionnaireItem.initialValue[x] Type (when fixed[x] present) | QuestionnaireItem.type Code | Notes                                                            |
+| ------------------- | -------------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------- |
+| base64Binary        | string                                                         | string                      |                                                                  |
+| boolean             | boolean                                                        | boolean                     |                                                                  |
+| canonical           | uri                                                            | url                         |                                                                  |
+| code                | coding                                                         | choice                      | During $extract, this needs to map back from coding to code      |
+| date                | date                                                           | date                        |                                                                  |
+| dateTime            | dateTime                                                       | dateTime                    |                                                                  |
+| decimal             | decimal                                                        | decimal                     |                                                                  |
+| id                  | string                                                         | string                      |                                                                  |
+| instant             | dateTime                                                       | dateTime                    |                                                                  |
+| integer             | integer                                                        | integer                     |                                                                  |
+| integer64           | integer                                                        | integer                     |                                                                  |
+| markdown            | string                                                         | string                      |                                                                  |
+| oid                 | uri                                                            | string                      |                                                                  |
+| positiveInt         | integer                                                        | integer                     |                                                                  |
+| string              | string                                                         | string                      |                                                                  |
+| time                | time                                                           | time                        |                                                                  |
+| unsignedInt         | integer                                                        | integer                     |                                                                  |
+| uri                 | uri                                                            | url or string               | Check that the URI is a valid URL, if not it should be a string? |
+| url                 | uri                                                            | url                         |                                                                  |
+| uuid                | uri                                                            | string                      |                                                                  |
+
+| Other Data Types  | QuestionnaireItem.initialValue[x] Type                                            | QuestionnaireItem.type Code                                          | Notes                                                                                                                                                                                                     |
+| ----------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| coding            | coding                                                                            | choice                                                               |                                                                                                                                                                                                           |
+| codeableConcept   | initialValueCoding; and/or<br>initialValueString (to represent text)              | subgroup with items of type choice (coding) and string (text)??      |                                                                                                                                                                                                           |
+| quantity          | quanitity                                                                         | quantity                                                             | Extension [https://hl7.org/fhir/extensions/StructureDefinition-questionnaire-unit.html](https://hl7.org/fhir/extensions/StructureDefinition-questionnaire-unit.html) can be used to capture specific unit |
+| reference         | reference                                                                         | reference                                                            |                                                                                                                                                                                                           |
+|                   |                                                                                   |                                                                      |                                                                                                                                                                                                           |
+| complex data type | initialValue type represents each primitive type defined in the complex data type | type represents each primitive type defined in the complex data type | See example mapping below                                                                                                                                                                                 |
+
+For non-primitive, complex data types, $questionnaire should be applied to the SD of the data type and returned as a subgroup of questionnaire items. An example of the [Range data type](https://www.hl7.org/fhir/datatypes.html#Range) represented as a group of questionnaire items follows.
+
+```
+{
+  "linkId": "Range",
+  "definition": "http://example.org/StructureDefinition/ExampleObservation#Observation.valueRange",
+  "text": "Actual result",
+  "type": "group",
+  "item": [
+    {
+      "linkId": "Range.low",
+      "definition": "http://example.org/StructureDefinition/ExamleObservation#Observation.valueQuantity.low",
+      "text": "Low limit",
+      "type": "quantity"
+    },
+    {
+      "linkId": "Range.high",
+      "definition": "http://example.org/StructureDefinition/ExampleObservation#Observation.valueQuantity.high",
+      "text": "High limit",
+      "type": "quantity"
+    }
+  ]
+}
+```
+
+<!-- ##### Questionnaire/$populate
+
+See [SDC expression based population](https://build.fhir.org/ig/HL7/sdc/populate.html#expression-based-population) for population details.
+
+A pre-populated questionnaire response can be generated using the resulting questionnaire items. Item initial value or initial expression is used to set the answer value.
+
+| questionnaireItem               | questionnaireResponseItem | notes                                           |
+| ------------------------------- | ------------------------- | ----------------------------------------------- |
+| initial.value[x]                | answer.value[x]           | Set by fixed[x], pattern[x], default[x] from SD |
+| questionnaire-initialExpression | answer.value[x]           | Set by CPG featureExpression from SD            |
+
+##### QuestionnaireResponse/$extract
+
+See [SDC definition based extraction](https://build.fhir.org/ig/HL7/sdc/extraction.html#definition-extract) for extraction details.
+
+An extracted resource is created using the QuestionnaireResponse and corresponding Questionnaire. The extracted resource will not be persisted but used as a part of the \$apply context.
+
+If an observation, set Observation.derivedFrom to the canonical of the QuestionnaireResponse. -->
 
 #### PlanDefinition/$questionnaire
 
-<!-- the output is an assembled quetionnaire, under the hood could follow scd assemble with modular questionnaires, but may also assemble group items as long as the output is a single questionnaire --- one options: , etc-->
-See [SDC modular questionnaires](https://build.fhir.org/ig/HL7/sdc/modular.html#modular) for assembly details.
+PlanDefinition/\$questionnaire uses the same principles and methodology as StructureDefinition/\$questionnaire, but is generated from multiple StructureDefinitions. In the case of CPG PlanDefinitions, these are case feature definitions referenced from PlanDefinition action.input.
 
-Multiple questionnaires may be generated if there is more than one PlanDefinition.action.input. These can be combined into a modular questionnaire which can then be assembled to create a single questionnaire. To conform with $assemble
+<!-- Add details on populate/extract here ? -->
 
-- Create a modular questionnaire with extension [assemble-expectation](https://build.fhir.org/ig/HL7/sdc/StructureDefinition-sdc-questionnaire-assemble-expectation.html) set to code "assemble-root"
+The PlanDefinition is processed as follows:
 
-- For each questionnaire generated from PlanDefinition.action.input, add the [subQuestionnaire](https://build.fhir.org/ig/HL7/sdc/StructureDefinition-sdc-questionnaire-subQuestionnaire.html) extension
+1. Find all planDefinition.action.input elements where a case feature is referenced. If the plan definition includes action.definitionCanonical with a reference to another plan definition, recurse over the nested planDefinition.action.input elements as well.
+
+2. For each case feature identified from the PlanDefinition:
+
+   1. Generate a group of questionnaire items on the target questionnaire; or
+
+   2. To leverage [Questionnaire/$assemble](https://hl7.org/fhir/uv/sdc/OperationDefinition-Questionnaire-assemble.html), generate an individual questionnaire for each case feature and call \$assemble to generate a single questionnaire. See [SDC modular questionnaires](https://build.fhir.org/ig/HL7/sdc/modular.html#modular) for implementation details.
 
 #### Authoring Guidance
 
+To support interactive CDS, case feature definitions must be authored with questionnaire generation and extraction in mind:
 
+1. Any element that is relevant to extraction, should be included in the differential
+2.
 
 <!-- Standardize Interactive CDS
 - $questionnaire operation for interactive CDS (StructureDefinition/$questionnaire)
